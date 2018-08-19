@@ -1,0 +1,178 @@
+# Trinket IO demo
+# Welcome to CircuitPython 2.0.0 :)
+
+import board
+from digitalio import DigitalInOut, Direction, Pull
+from analogio import AnalogIn
+import adafruit_dotstar as dotstar
+import pulseio
+import time
+
+
+######################### SETTINGS ##############################
+
+# Brightness value 0.0 to 1.0
+ledBrightness = 1.0
+
+# Notification threshold volts
+noticeThresholdVolts = 1.90
+
+# Warning threshold volts
+warnThresholdVolts = 2.10
+
+# Power switch values
+acPowerOn = False
+acPowerOff = not acPowerOn
+
+######################### PINS ##############################
+
+# Notification LED
+dot = dotstar.DotStar(board.APA102_SCK, board.APA102_MOSI, 1)
+
+# Fluid reading: Analog input on D0
+analog1in = AnalogIn(board.D0)
+
+# Power control: Digital output on D3
+switch = DigitalInOut(board.D3)
+switch.direction = Direction.OUTPUT
+switch.value = False
+
+# Piezo
+piezo = pulseio.PWMOut(board.A4, duty_cycle=0, frequency=440, variable_frequency=True)
+
+######################### HELPERS ##############################
+
+# Helper to convert analog input to voltage
+def getVoltage(pin):
+    return (pin.value * 3.3) / 65536
+
+# Helper to give us a nice color swirl
+def wheel(pos):
+    # Input a value 0 to 255 to get a color value.
+    # The colours are a transition r - g - b - back to r.
+    if (pos < 0):
+        return [0, 0, 0]
+    if (pos > 255):
+        return [0, 0, 0]
+    if (pos < 85):
+        return [int(pos * 3), int(255 - (pos*3)), 0]
+    elif (pos < 170):
+        pos -= 85
+        return [int(255 - pos*3), 0, int(pos*3)]
+    else:
+        pos -= 170
+        return [0, int(pos*3), int(255 - pos*3)]
+
+# Color reference
+colors = {
+    "orange": 52
+  , "yellow": 43
+  , "red": 85
+  , "blue": 170
+  , "green": 255
+}
+
+# Set specific colors
+def getColorValue(color):
+    colorValue = colors[color]
+    colorValueSafe = wheel(colorValue)
+    return colorValueSafe
+    
+# Play tones
+def playTones():
+    for f in (523, 440):
+        piezo.frequency = f
+        piezo.duty_cycle = 65536 // 4  # On 50%
+        time.sleep(0.25)  # On for 1/4 second
+        piezo.duty_cycle = 0  # Off
+        time.sleep(0.05)  # pause between notes
+
+# Class for handling the power switch
+class AcPower(object):
+    def __init__(self, switch):
+        # Cool off period
+        self.coolOffSeconds = 60
+        
+        # Power off time reference
+        self.powerOffTime = -1
+        
+        # Switch object
+        self.switch = switch
+        
+    # Are we cooling off
+    def isCoolingOff(self):
+        if time.monotonic() - self.powerOffTime < self.coolOffSeconds:
+            return True
+        else:
+            return False
+
+    # Power off AC
+    def turnAcOff(self):
+        # Set the power off time only if the immediately preceding state
+        # is ON
+        if self.switch.value is True:
+            self.powerOffTime = time.monotonic()
+        
+        # Turn the switch off
+        self.switch.value = acPowerOff
+        
+        return self.powerOffTime
+        
+    def turnAcOn(self):
+        if not self.isCoolingOff():
+            self.switch.value = acPowerOn
+    
+######################### MAIN LOOP ##############################
+
+# Initialize an AcPower instance
+acPower = AcPower(switch)
+
+while True:
+    # Check input voltage
+    liquidLevelVolts = getVoltage(analog1in)
+    print("D0: %0.2f" % liquidLevelVolts)
+    
+    # Check for normal values
+    if liquidLevelVolts < noticeThresholdVolts:
+        # Shut off LED
+        dot.brightness = 0.0
+        dot.show()
+        
+        # Make sure switch power is normal
+        acPower.turnAcOn()
+    
+    # Check for notice
+    elif liquidLevelVolts >= noticeThresholdVolts \
+    and liquidLevelVolts < warnThresholdVolts:
+        dot.brightness = ledBrightness
+        dot[0] = getColorValue("orange")
+        dot.show()
+        
+        # Play tones on the piezo
+        playTones()
+        
+        # Notification threshold should still keep power on
+        acPower.turnAcOn()
+        
+    # Check for warning
+    elif liquidLevelVolts > warnThresholdVolts:
+        dot.brightness = ledBrightness
+        dot[0] = getColorValue("red")
+        dot.show()
+
+        # Play tones on the piezo
+        playTones()
+        
+        # Turn off AC
+        powerOffTime = acPower.turnAcOff()
+        print("Power off time: %d" % powerOffTime)
+
+    # Sleep for 500ms
+    time.sleep(0.25)
+
+    # Always turn off LED (so it flashes)
+    dot.brightness = 0.0
+    dot.show()
+    
+    # Sleep at end of cycle
+    time.sleep(0.50)
