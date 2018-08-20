@@ -1,5 +1,6 @@
-# Trinket IO demo
-# Welcome to CircuitPython 2.0.0 :)
+# No Overflow - Turn off a switch before a liquid level rises too high
+# 19 Aug 2018
+# @author Andy Robb andy@andyrobb.com
 
 import board
 from digitalio import DigitalInOut, Direction, Pull
@@ -15,10 +16,12 @@ import time
 ledBrightness = 1.0
 
 # Notification threshold volts
-noticeThresholdVolts = 1.90
+# noticeThresholdVolts = 1.90
+noticeThresholdVolts = 2.17
 
 # Warning threshold volts
-warnThresholdVolts = 2.10
+# warnThresholdVolts = 2.10
+warnThresholdVolts = 2.20
 
 # Power switch values
 acPowerOn = False
@@ -121,7 +124,7 @@ class AcPower(object):
     def turnAcOn(self):
         if not self.isCoolingOff():
             self.switch.value = acPowerOn
-    
+
 ######################### MAIN LOOP ##############################
 
 # Initialize an AcPower instance
