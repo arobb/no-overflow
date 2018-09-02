@@ -38,12 +38,53 @@ analog1in = AnalogIn(board.D0)
 # Power control: Digital output on D3
 switch = DigitalInOut(board.D3)
 switch.direction = Direction.OUTPUT
-switch.value = False
+switch.value = acPowerOn
 
 # Piezo
 piezo = pulseio.PWMOut(board.A4, duty_cycle=0, frequency=440, variable_frequency=True)
 
 ######################### HELPERS ##############################
+
+# My queue
+class Queue(object):
+    def __init__(self, max=None):
+        self.max = max
+        self.store = []
+        
+    def __repr__(self):
+        return self.store
+        
+    def __len__(self):
+        return len(self.store)
+        
+    def __iter__(self):
+        return iter(self.store)
+        
+    def append(self,newElem):
+        # print("add: "+str(newElem))
+        
+        if self.max is not None:
+            # Reduce by one so we make room for new value
+            neededLen = self.max-1
+            if len(self) > neededLen:
+                while True:
+                    self.popleft()
+                    if len(self) <= neededLen:
+                        break
+            
+        self.store.append(newElem)
+        
+    def popleft(self):
+        value = self.store[0]
+        del self.store[0]
+        return value
+
+# Average an iterable
+def avg(iter):
+    sum = 0
+    for index, value in enumerate(iter):
+        sum += value
+    return sum / float(len(iter))
 
 # Helper to convert analog input to voltage
 def getVoltage(pin):
@@ -113,7 +154,7 @@ class AcPower(object):
     def turnAcOff(self):
         # Set the power off time only if the immediately preceding state
         # is ON
-        if self.switch.value is True:
+        if self.switch.value is True or self.powerOffTime == -1:
             self.powerOffTime = time.monotonic()
         
         # Turn the switch off
@@ -125,18 +166,88 @@ class AcPower(object):
         if not self.isCoolingOff():
             self.switch.value = acPowerOn
 
+# normal, notice, warning
+class State(object):
+    def __init__(self, noticeThreshold, warningThreshold):
+        self.state = "normal"
+        self.noticeThreshold = noticeThreshold
+        self.warningThreshold = warningThreshold
+        
+    def getState(self):
+        return self.state
+        
+    def applyInputs(self, *inputs):
+        normal = []
+        notice = []
+        warning = []
+        
+        if len(inputs) < 1:
+            return
+        
+        # Apply booleans based on each input
+        for input in inputs:
+            if input < self.noticeThreshold:
+                normal.append(True)
+                notice.append(False)
+                warning.append(False)
+                
+            elif input >= self.noticeThreshold \
+            and input < self.warningThreshold:
+                normal.append(False)
+                notice.append(True)
+                warning.append(False)
+                
+            elif input >= self.warningThreshold:
+                normal.append(False)
+                notice.append(False)
+                warning.append(True)
+                
+        # Combine input results
+        def reduceAnd(results):
+            if len(results) < 1:
+                return None
+                
+            output = True
+            for r in results:
+                output = output and r
+                
+            return output
+        
+        # Determine whether a state change should happen
+        if reduceAnd(normal):
+            self.state = "normal"
+                
+        elif reduceAnd(notice):
+            self.state = "notice"
+                
+        elif reduceAnd(warning):
+            self.state = "warning"
+
 ######################### MAIN LOOP ##############################
+
+# Initialize averaging list
+recentLevels = Queue(max=10)
 
 # Initialize an AcPower instance
 acPower = AcPower(switch)
 
+# State management
+state = State(noticeThresholdVolts, warnThresholdVolts)
+
 while True:
     # Check input voltage
     liquidLevelVolts = getVoltage(analog1in)
-    print("D0: %0.2f" % liquidLevelVolts)
+    print("D0: %0.3f" % liquidLevelVolts)
+    
+    recentLevels.append(liquidLevelVolts)
+    print("Avg: %0.3f" % avg(recentLevels))
+    
+    state.applyInputs(liquidLevelVolts, avg(recentLevels))
+    print(state.getState())
     
     # Check for normal values
-    if liquidLevelVolts < noticeThresholdVolts:
+    # if liquidLevelVolts < noticeThresholdVolts:
+    if state.getState() == "normal":
         # Shut off LED
         dot.brightness = 0.0
         dot.show()
@@ -145,8 +256,9 @@ while True:
         acPower.turnAcOn()
     
     # Check for notice
-    elif liquidLevelVolts >= noticeThresholdVolts \
-    and liquidLevelVolts < warnThresholdVolts:
+    # elif liquidLevelVolts >= noticeThresholdVolts \
+    # and liquidLevelVolts < warnThresholdVolts:
+    elif state.getState() == "notice":
         dot.brightness = ledBrightness
         dot[0] = getColorValue("orange")
         dot.show()
@@ -158,7 +270,8 @@ while True:
         acPower.turnAcOn()
         
     # Check for warning
-    elif liquidLevelVolts > warnThresholdVolts:
+    # elif liquidLevelVolts >= warnThresholdVolts:
+    elif state.getState() == "warning":
         dot.brightness = ledBrightness
         dot[0] = getColorValue("red")
         dot.show()
@@ -169,6 +282,11 @@ while True:
         # Turn off AC
         powerOffTime = acPower.turnAcOff()
         print("Power off time: %d" % powerOffTime)
+        
+    else:
+        dot.brightness = ledBrightness
+        dot[0] = getColorValue("blue")
+        dot.show()
 
     # Sleep for 500ms
     time.sleep(0.25)
