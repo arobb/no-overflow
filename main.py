@@ -15,9 +15,12 @@ import time
 # Brightness value 0.0 to 1.0
 ledBrightness = 1.0
 
+# Info threshold
+infoThresholdVolts = 2.00
+
 # Notification threshold volts
 # noticeThresholdVolts = 1.90
-noticeThresholdVolts = 2.17
+noticeThresholdVolts = 2.12
 
 # Warning threshold volts
 # warnThresholdVolts = 2.10
@@ -168,8 +171,9 @@ class AcPower(object):
 
 # normal, notice, warning
 class State(object):
-    def __init__(self, noticeThreshold, warningThreshold):
+    def __init__(self, infoThreshold, noticeThreshold, warningThreshold):
         self.state = "normal"
+        self.infoThreshold = infoThreshold
         self.noticeThreshold = noticeThreshold
         self.warningThreshold = warningThreshold
         
@@ -178,6 +182,7 @@ class State(object):
         
     def applyInputs(self, *inputs):
         normal = []
+        info = []
         notice = []
         warning = []
         
@@ -186,19 +191,29 @@ class State(object):
         
         # Apply booleans based on each input
         for input in inputs:
-            if input < self.noticeThreshold:
+            if input < self.infoThreshold:
                 normal.append(True)
+                info.append(False)
+                notice.append(False)
+                warning.append(False)
+                
+            elif input >= self.infoThreshold \
+            and input < self.noticeThreshold:
+                normal.append(False)
+                info.append(True)
                 notice.append(False)
                 warning.append(False)
                 
             elif input >= self.noticeThreshold \
             and input < self.warningThreshold:
                 normal.append(False)
+                info.append(False)
                 notice.append(True)
                 warning.append(False)
                 
             elif input >= self.warningThreshold:
                 normal.append(False)
+                info.append(False)
                 notice.append(False)
                 warning.append(True)
                 
@@ -217,6 +232,9 @@ class State(object):
         if reduceAnd(normal):
             self.state = "normal"
                 
+        elif reduceAnd(info):
+            self.state = "info"
+                
         elif reduceAnd(notice):
             self.state = "notice"
                 
@@ -232,7 +250,7 @@ recentLevels = Queue(max=10)
 acPower = AcPower(switch)
 
 # State management
-state = State(noticeThresholdVolts, warnThresholdVolts)
+state = State(infoThresholdVolts, noticeThresholdVolts, warnThresholdVolts)
 
 while True:
     # Check input voltage
@@ -255,6 +273,17 @@ while True:
         # Make sure switch power is normal
         acPower.turnAcOn()
     
+    # Check for info
+    # elif liquidLevelVolts >= infoThresholdVolts \
+    # and liquidLevelVolts < noticeThresholdVolts:
+    elif state.getState() == "info":
+        dot.brightness = ledBrightness
+        dot[0] = getColorValue("orange")
+        dot.show()
+        
+        # Notification threshold should still keep power on
+        acPower.turnAcOn()
+        
     # Check for notice
     # elif liquidLevelVolts >= noticeThresholdVolts \
     # and liquidLevelVolts < warnThresholdVolts:
@@ -264,7 +293,7 @@ while True:
         dot.show()
         
         # Play tones on the piezo
-        playTones()
+        # playTones()
         
         # Notification threshold should still keep power on
         acPower.turnAcOn()
@@ -277,7 +306,7 @@ while True:
         dot.show()
 
         # Play tones on the piezo
-        playTones()
+        # playTones()
         
         # Turn off AC
         powerOffTime = acPower.turnAcOff()
