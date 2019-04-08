@@ -320,9 +320,11 @@ while True:
     # Sleep for 500ms
     time.sleep(0.25)
 
-    # Always turn off LED (so it flashes)
-    dot.brightness = 0.0
-    dot.show()
+    # Leave the LED on in info state, otherwise 
+    # turn it off here (so it flashes)
+    if state.getState() != "info":
+        dot.brightness = 0.0
+        dot.show()
     
     # Sleep at end of cycle
     time.sleep(0.50)
